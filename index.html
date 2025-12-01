@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Test fetch with AllOrigins</title>
+<body style="font-family:Arial;color:#111">
+<h3>Quick test using allorigins (testing only)</h3>
+<input id="num" placeholder="Enter number" value="9336561199">
+<button id="go">Fetch</button>
+<pre id="out" style="background:#eee;padding:10px;border-radius:6px;"></pre>
+<script>
+const BASE='https://meowmeow.rf.gd/gand/mobile.php?num=';
+const PROXY='https://api.allorigins.win/raw?url=';
+document.getElementById('go').onclick = async ()=>{
+  const n = document.getElementById('num').value.trim();
+  const url = PROXY + encodeURIComponent(BASE + n);
+  document.getElementById('out').textContent = 'Fetching ' + url + ' ...';
+  try{
+    const r = await fetch(url,{cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const txt = await r.text();
+    document.getElementById('out').textContent = txt;
+  }catch(e){
+    document.getElementById('out').textContent = 'Error: ' + e;
+  }
+};
+</script>
