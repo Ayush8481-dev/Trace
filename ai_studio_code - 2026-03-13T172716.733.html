@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Hides the referrer to prevent Drive from blocking the cross-origin video playback -->
+    <meta name="referrer" content="no-referrer" />
+    <title>Real-Time Drive Stream Fetcher</title>
+    
+    <style>
+        :root {
+            --bg-color: #0f0f13;
+            --container-bg: #1c1c21;
+            --accent: #0078FF;
+            --accent-hover: #0056b3;
+            --text-main: #ffffff;
+            --text-muted: #a0a0a0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        header {
+            width: 100%;
+            padding: 20px;
+            text-align: center;
+            background: #111;
+            border-bottom: 1px solid #2d2d35;
+        }
+
+        header h1 { margin: 0; font-size: 1.5rem; font-weight: 500; }
+
+        .player-wrapper {
+            width: 100%;
+            max-width: 1000px;
+            margin: 20px auto;
+            background-color: var(--container-bg);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+            position: relative;
+        }
+
+        video {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background-color: #000;
+            display: block;
+        }
+
+        .controls-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background-color: var(--container-bg);
+            border-top: 1px solid #2d2d35;
+        }
+
+        .quality-selector { display: flex; gap: 10px; }
+
+        button {
+            background-color: #2d2d35;
+            color: var(--text-main);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:hover:not(:disabled) { background-color: #3d3d45; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button.active { background-color: var(--accent); color: white; }
+
+        .status-text { color: var(--text-muted); font-size: 0.85rem; font-weight: bold; }
+        .error-text { color: #ff4757; }
+        .success-text { color: #2ed573; }
+
+        .info-panel {
+            max-width: 960px;
+            width: 90%;
+            margin: 0 auto 40px auto;
+            padding: 20px;
+            background-color: var(--container-bg);
+            border-radius: 8px;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            border-left: 4px solid var(--accent);
+        }
+
+        /* Loading Overlay */
+        #loadingOverlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 62px;
+            background: rgba(0,0,0,0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+
+        .spinner {
+            width: 40px; height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1 id="movieTitle">Fetching Movie Data...</h1>
+    </header>
+
+    <div class="player-wrapper">
+        <div id="loadingOverlay">
+            <div class="spinner"></div>
+            <div id="loadingText">Fetching real-time links from Google Drive...</div>
+        </div>
+
+        <video id="cinemaPlayer" controls preload="metadata" crossorigin="anonymous">
+            Your browser does not support the video tag.
+        </video>
+
+        <div class="controls-bar">
+            <div class="status-text" id="statusMsg">Awaiting Connection...</div>
+            <div class="quality-selector">
+                <button id="btn-sd" onclick="setQuality('sd')" disabled>360p SD</button>
+                <button id="btn-hd" class="active" onclick="setQuality('hd')" disabled>720p HD</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="info-panel">
+        <h3>How this works:</h3>
+        <p>This script connects directly to Google Drive's API, requests the video data for the specified file ID, decodes the URL payload, extracts the H.264 streaming URLs, and injects them into the HTML5 Video player.</p>
+        <p style="color: #ffa502;"><strong>⚠️ Important:</strong> If the fetch fails, it is because of CORS blocking. Please install a "CORS Unblocker" extension, turn it on, and refresh this page.</p>
+    </div>
+
+    <script>
+        // Configuration
+        const FILE_ID = "10tF9J0WHQ0s3gwwFDJmpfY3k15hdiFI6";
+        const FETCH_URL = `https://r.jina.ai/https://drive.google.com/get_video_info?docid=10tF9J0WHQ0s3gwwFDJmpfY3k15hdiFI6&drive_originator_app=303&auditContext=forDisplay`;
+
+        const player = document.getElementById('cinemaPlayer');
+        const statusMsg = document.getElementById('statusMsg');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const loadingText = document.getElementById('loadingText');
+        
+        let availableStreams = { hd: null, sd: null };
+
+        // Fetch the data immediately on load
+        window.onload = async () => {
+            try {
+                // Fetch raw data from Google Drive
+                const response = await fetch(FETCH_URL);
+                if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+                
+                const rawText = await response.text();
+                
+                // Parse URL Encoded Data
+                const params = new URLSearchParams(rawText);
+                
+                // Check if Google returned an error (e.g., rate limit, require login)
+                if (params.get('status') === 'fail') {
+                    throw new Error(params.get('reason') || "Google blocked the request (Login required or Quota Exceeded).");
+                }
+
+                // Update Title
+                if (params.has('title')) {
+                    document.getElementById('movieTitle').innerText = params.get('title');
+                }
+
+                // Parse the embedded JSON config
+                const playerResponseStr = params.get('player_response');
+                if (!playerResponseStr) throw new Error("No player_response found in Google Drive payload.");
+                
+                const playerResponse = JSON.parse(playerResponseStr);
+                const formats = playerResponse.streamingData.formats ||[];
+
+                // Extract Streams Based on iTag
+                formats.forEach(format => {
+                    if (format.itag === 22) availableStreams.hd = format.url; // 720p
+                    if (format.itag === 18) availableStreams.sd = format.url; // 360p
+                });
+
+                if (!availableStreams.hd && !availableStreams.sd) {
+                    throw new Error("No playable mp4 formats found for this file.");
+                }
+
+                // Success! Enable buttons and play
+                document.getElementById('btn-hd').disabled = !availableStreams.hd;
+                document.getElementById('btn-sd').disabled = !availableStreams.sd;
+                
+                loadingOverlay.style.display = 'none';
+                statusMsg.className = "status-text success-text";
+                
+                // Play HD by default if available, otherwise SD
+                setQuality(availableStreams.hd ? 'hd' : 'sd');
+
+            } catch (error) {
+                console.error(error);
+                loadingOverlay.style.display = 'none';
+                statusMsg.className = "status-text error-text";
+                statusMsg.innerText = `Fetch Error: ${error.message} (Is your CORS extension enabled?)`;
+            }
+        };
+
+        // Quality Switcher
+        function setQuality(quality) {
+            if (!availableStreams[quality]) return;
+
+            const currentTime = player.currentTime;
+            const isPaused = player.paused;
+
+            // Update UI
+            document.getElementById('btn-hd').classList.remove('active');
+            document.getElementById('btn-sd').classList.remove('active');
+            document.getElementById(`btn-${quality}`).classList.add('active');
+
+            // Apply new source
+            player.src = availableStreams[quality];
+            statusMsg.innerText = `Streaming natively in ${quality.toUpperCase()} format`;
+
+            // Restore position
+            player.onloadedmetadata = () => {
+                player.currentTime = currentTime;
+                if (!isPaused && currentTime > 0) player.play();
+                player.onloadedmetadata = null; 
+            };
+        }
+
+        player.addEventListener('error', function(e) {
+            statusMsg.className = "status-text error-text";
+            statusMsg.innerHTML = 'Player Error: Video blocked. Make sure your browser Referer is faked/allowed.';
+        });
+    </script>
+</body>
+</html>
